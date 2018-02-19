@@ -1,3 +1,7 @@
+#' Author: Alind Gupta
+#' Description: Analysis of proneural microarray dataset
+#'
+
 library(affy)
 library(limma)
 library(drosophila2.db)
@@ -8,42 +12,42 @@ library(Rtsne)
 library(dbscan)
 library(RColorBrewer)
 
-#########################################################################################
-                                        # process celfiles
-#########################################################################################
+set.seed(42)
+
+#' TODO: download from GEOBase
 setwd("~/Documents/drosophila/data/jarman/")
 affyDirs <- c(
-    "atoGFP+/t1",
-    "atoGFP-/t1",
-    "mutGFP+", # dont care about mutant
-    "mutGFP-", # dont care about mutant
-    "atoGFP+/t2",
-    "atoGFP-/t2",
-    "atoGFP+/t3",
-    "atoGFP-/t3")
+  "atoGFP+/t1",
+  "atoGFP-/t1",
+  "mutGFP+", # dont care about mutant
+  "mutGFP-", # dont care about mutant
+  "atoGFP+/t2",
+  "atoGFP-/t2",
+  "atoGFP+/t3",
+  "atoGFP-/t3")
 
 affyBatch <- sapply(
-    affyDirs,
-    function(x) ReadAffy(celfile.path=paste("celfiles/", x, sep="")))
+  affyDirs,
+  function(x) ReadAffy(celfile.path=paste("celfiles/", x, sep="")))
 eset <- lapply(affyBatch, rma)
 e <- lapply(eset, exprs)
 rm(affyBatch, eset)
 
-
-#########################################################################################
-                                        # fit a linear model and perform empirical Bayes shrinkage
-#########################################################################################
 linearFit <- function(gfp, nogfp) {
-    design <- model.matrix(~ 0
-                           + c(rep(1, ncol(gfp)),
-                               rep(0, ncol(nogfp)))
-                           + c(rep(0, ncol(gfp)),
-                               rep(1, ncol(nogfp))))
-    colnames(design) <- c("gfp", "nogfp")
-    glm <- lmFit(cbind(gfp, nogfp), design=design) %>% eBayes
-    contrasts.matrix <- makeContrasts(dif=gfp-nogfp, levels=design)
-    fit <- contrasts.fit(glm, contrasts.matrix) %>% eBayes
-    return(list(glm$coefficients, fit$coefficients))
+  #' Fit a linear model and perform empirical Bayesian shrinkage
+  #' @param gfp normalized values for atoGFP+
+  #' @param nogfp normalized values for atoGFP-
+  #' @return list of coefficients from [1] lm and [2] eBayes
+  design <- model.matrix(~ 0
+                         + c(rep(1, ncol(gfp)),
+                             rep(0, ncol(nogfp)))
+                         + c(rep(0, ncol(gfp)),
+                             rep(1, ncol(nogfp))))
+  colnames(design) <- c("gfp", "nogfp")
+  glm <- lmFit(cbind(gfp, nogfp), design=design) %>% eBayes
+  contrasts.matrix <- makeContrasts(dif=gfp-nogfp, levels=design)
+  fit <- contrasts.fit(glm, contrasts.matrix) %>% eBayes
+  return(list(glm$coefficients, fit$coefficients))
 }
 
 # execute linear fits on celfile subsets
@@ -66,10 +70,7 @@ glm <- glm[!is.na(row.names(glm)),]
 row.names(fit) <- tab$SYMBOL[match(row.names(fit), tab$PROBEID)]
 fit <- fit[!is.na(row.names(fit)),]
 
-
-#########################################################################################
-                                        # reduce dataset size
-#########################################################################################
+#' reduce size of dataset
 threshold.abs <- 0.5 # threshold for absolute expression level
 threshold.var <- 0.6 # threshold for variance over the three time points
 
@@ -87,7 +88,7 @@ mask <- fit.variances > cutoff
 glm.trunc <- glm.trunc[mask,]
 fit.trunc <- fit.trunc[mask,]
 
-# check for presence of genes of interest
+#' check for presence of genes of interest
 "sktl" %in% row.names(glm.trunc)
 "INPP5E" %in% row.names(glm.trunc)
 "unc" %in% row.names(glm.trunc)
@@ -95,50 +96,44 @@ fit.trunc <- fit.trunc[mask,]
 "PI4KIIIalpha" %in% row.names(fit.trunc)
 nrow(fit.trunc)
 
-#########################################################################################
-                                # run affinity propagation
-#########################################################################################
+#' run affinity propagation
+#' check that number of rows is manageable
 if (nrow(fit.trunc) < 5000) {
-    ap.out <- apcluster(negDistMat(r=2), fit.trunc)
+  ap.out <- apcluster(negDistMat(r=2), fit.trunc)
 } else {
-    print("Warning: trying to run apcluster with >4000 datapoints")
+  print("Warning: trying to run apcluster with >4000 datapoints")
 }
 
-
-#########################################################################################
-                                # GO annotations and enrichments
-#########################################################################################
+#' GO annotations
 clustNum <- 7 # number of cluster containing sktl
 cluster <- ap.out[[clustNum]] %>% names
 
-# the parameter intrs is a vector of gene symbols
 analyzeGO <- function(intrs) {
-    alls <- row.names(fit.trunc)
-    geneList <- as.integer(alls %in% intrs) %>% factor
-    names(geneList) <- alls
-    GOdata <- new(
-        "topGOdata",
-        ontology="BP",
-        allGenes=geneList,
-        geneSel=function(x) x < 0.01,
-        description="Test",
-        annot=annFUN.org,
-        mapping="org.Dm.eg.db",
-        ID="SYMBOL")
-    resultFisher <- runTest(GOdata, algorithm="classic", statistic="fisher")
-    GenTable(GOdata, classicFisher=resultFisher, topNodes=10)
+  #' Print a gene ontology enrichments
+  #' @param intrs a vector gene symbols
+  alls <- row.names(fit.trunc)
+  geneList <- as.integer(alls %in% intrs) %>% factor
+  names(geneList) <- alls
+  GOdata <- new(
+    "topGOdata",
+    ontology="BP",
+    allGenes=geneList,
+    geneSel=function(x) x < 0.01,
+    description="Test",
+    annot=annFUN.org,
+    mapping="org.Dm.eg.db",
+    ID="SYMBOL")
+  resultFisher <- runTest(GOdata, algorithm="classic", statistic="fisher")
+  GenTable(GOdata, classicFisher=resultFisher, topNodes=10)
 }
 matplot(t(fit.trunc[row.names(fit.trunc) %in% names(ap.out[[clustNum]]),]), type="l")
 
-
-#########################################################################################
-                                        # run t-SNE
-#########################################################################################
+#' run t-SNE
 tsne.out <- Rtsne(fit.trunc, theta=0.0, verbose=TRUE) %>% (function(x) x$Y)
 row.names(tsne.out) <- row.names(fit.trunc)
 mask <- tsne.out[row.names(tsne.out) %in% names(ap.out[[clustNum]]),]
 
-# run hdbscan
+#' run hdbscan
 geneName <- "sktl"
 minPts <- 5 # want this to be argmax<n>(num_clusters > arbitrary_num_clusters)
 gene.at <- which(row.names(fit.trunc) == geneName)
@@ -151,29 +146,27 @@ analyzeGO(row.names(tsne.out)[cluster.genes])
 plot(tsne.out, col=hdbscan.out$cluster)
 
 
-#########################################################################################
-                                        # plotting tsne embeddings
-#########################################################################################
+#' plot data
 col1 <- brewer.pal(9, "Greys")
 set1 <- c(brewer.pal(8, "Set1"))
 
 par(bty="n",
-    mfrow=c(1,1),
-    mar=c(3, 3, 3, 3),   # plot margins b-l-t-r
-    las=1,               # horizontal labels
-    tcl=-.25,            # tick length
-    font.main=1,         # plain font
-    mgp=c(2.5, 0.5, 0),  # axis spacings
-    cex.main=1.2)
+  mfrow=c(1,1),
+  mar=c(3, 3, 3, 3),   # plot margins b-l-t-r
+  las=1,               # horizontal labels
+  tcl=-.25,            # tick length
+  font.main=1,         # plain font
+  mgp=c(2.5, 0.5, 0),  # axis spacings
+  cex.main=1.2)
 
 plot(tsne.out,
-     col=col1[4],
-     pch=19,
-     lwd=0.5, 
-     xlab="", 
-     ylab="", 
-     xaxt="n", 
-     yaxt="n")
+  col=col1[4],
+  pch=19,
+  lwd=0.5, 
+  xlab="", 
+  ylab="", 
+  xaxt="n", 
+  yaxt="n")
 
 # genes of interest
 sktl.at = which(row.names(fit.trunc) == "sktl")
@@ -199,4 +192,3 @@ legend("topright",
        border=NA,
        bty="n",
        pch=19)
-
